@@ -1,25 +1,5 @@
-#include <iostream>
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <arpa/inet.h>
-#include <sys/stat.h>
-#include <cstring>
-#include <dirent.h>
-#include <ctime>
-#include <csignal>
-#include <cctype>
-#include <cerrno>
-#include <event2/bufferevent.h>
-#include <event2/buffer.h>
-#include <event2/listener.h>
 #include "libeventHttp.h"
-#include "http_parser.h"
-#define _HTTP_CLOSE_ "Connection: close\r\n"
-#include <sstream>
-#include <memory>
-
+//#include "ThreadPool.h"
 void run_http_server(int port) {
     struct event_base *base;
     struct evconnlistener *listener;
