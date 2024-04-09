@@ -1,0 +1,16 @@
+cmake_minimum_required(VERSION 3.27)
+project(WebServer)
+
+set(CMAKE_CXX_STANDARD 14)
+
+LINK_DIRECTORIES(/usr/local/lib)
+
+add_executable(WebServer
+        main.cpp
+        ThreadPool.cpp
+        ThreadPool.h
+        libeventHttp.cpp
+        libeventHttp.h
+        )
+TARGET_LINK_LIBRARIES(WebServer event)
+add_executable(test test.cpp)
