@@ -11,6 +11,8 @@ add_executable(WebServer
         ThreadPool.h
         libeventHttp.cpp
         libeventHttp.h
-        )
+        http.cpp
+        http.h
+        headfile.h
+)
 TARGET_LINK_LIBRARIES(WebServer event)
-add_executable(test test.cpp)
