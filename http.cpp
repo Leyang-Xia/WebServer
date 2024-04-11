@@ -4,6 +4,19 @@ Http::Http(const char* buffer) {
     httpMessage = std::string(buffer);
     std::stringstream ss(httpMessage);
     ss >> method >> path >> protocol;
+
+    // 读取请求头部
+    size_t pos = httpMessage.find("Connection: ");
+    if (pos != std::string::npos) {
+        // 找到了Connection字段，现在找到该字段值的结束位置
+        size_t end_pos = httpMessage.find("\r\n", pos);
+        if (end_pos != std::string::npos) {
+            // 返回Connection字段值
+            connection =  httpMessage.substr(pos + 12, end_pos - (pos + 12));
+        }
+    }
+
+    std::cout << connection << std::endl;
     if (this->path == "/" || this->path == "/.") {
         pf = "./";
     } else {
@@ -152,8 +165,13 @@ int Http::send_header(struct bufferevent *bev, int no, const char* desp, const c
     // 文件大小
     sprintf(buf, "Content-Length:%ld\r\n", len);
     bufferevent_write(bev, buf, strlen(buf));
-    // Connection: close
-    bufferevent_write(bev, _HTTP_CLOSE_, strlen(_HTTP_CLOSE_));
+
+    // Connection: close/keep-alive
+    if (this->connection == "keep-alive") {
+        bufferevent_write(bev, "Connection: keep-alive\r\n", strlen("Connection: keep-alive\r\n"));
+    } else {
+        bufferevent_write(bev, _HTTP_CLOSE_, strlen(_HTTP_CLOSE_));
+    }
     //send \r\n
     bufferevent_write(bev, "\r\n", 2);
 

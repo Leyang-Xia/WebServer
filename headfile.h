@@ -21,6 +21,9 @@
 #include <event2/buffer.h>
 #include <event2/listener.h>
 #include <event2/event.h>
-
+#include "ThreadPool.h"
+#include <thread>
 #define _HTTP_CLOSE_ "Connection: close\r\n"
+extern std::mutex mutex;
+
 #endif

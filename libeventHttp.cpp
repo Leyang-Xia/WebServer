@@ -1,6 +1,7 @@
 #include "libeventHttp.h"
 #include "http.h"
 //#include "ThreadPool.h"
+std::mutex mutex;
 void run_http_server(int port) {
     struct event_base *base;
     struct evconnlistener *listener;
@@ -42,15 +43,47 @@ void run_http_server(int port) {
     event_base_free(base);
 }
 
+void listener_cb(struct evconnlistener *listener,
+                 evutil_socket_t fd, struct sockaddr *sa, int socklen, void *user_data)
+{
+    std::thread thread([&]() {
+//        std::unique_lock<std::mutex> lock(mutex);
+        printf("******************** begin call-------%s\n",__FUNCTION__);
+        struct event_base *base = static_cast<event_base *>(user_data);
+        struct bufferevent *bev;
+        printf("fd is %d\n",fd);
+
+        bev = bufferevent_socket_new(base, fd, BEV_OPT_CLOSE_ON_FREE);
+
+        if (!bev)
+        {
+            fprintf(stderr, "Error constructing bufferevent!");
+            event_base_loopbreak(base);
+            return;
+        }
+//        lock.unlock();
+        // 设置读取超时时间为 10 秒
+        struct timeval timeout = {1800, 0};
+        bufferevent_set_timeouts(bev, &timeout, nullptr);
+
+        bufferevent_flush(bev, EV_READ | EV_WRITE, BEV_NORMAL);
+        bufferevent_setcb(bev, conn_readcb, nullptr, conn_eventcb, nullptr);
+        bufferevent_enable(bev, EV_READ | EV_WRITE);
+
+        printf("******************** end call-------%s\n",__FUNCTION__);
+    });
+    thread.detach();
+}
 
 
 void conn_readcb(struct bufferevent *bev, void *user_data)
 {
     printf("******************** begin call %s.........\n",__FUNCTION__);
 
-    char buf[4096]={0};
 //    char method[50], path[4096], protocol[32];
-
+    struct evbuffer *input = bufferevent_get_input(bev);
+    size_t len = evbuffer_get_length(input);
+    char buf[len];
     bufferevent_read(bev, buf, sizeof(buf));
     std::unique_ptr<Http> http(new Http(buf));
 
@@ -76,9 +109,12 @@ void conn_eventcb(struct bufferevent *bev, short events, void *user_data)
     {
         printf("Got an error on the connection: %s\n",
                strerror(errno));
+    } else if (events & BEV_EVENT_TIMEOUT) {
+        printf("Connection timeout.\n");
     }
 
     bufferevent_free(bev);
+
     printf("******************** end call %s.........\n", __FUNCTION__);
 }
 
@@ -91,24 +127,4 @@ void signal_cb(evutil_socket_t sig, short events, void *user_data)
     event_base_loopexit(base, &delay);
 }
 
-void listener_cb(struct evconnlistener *listener,
-                 evutil_socket_t fd, struct sockaddr *sa, int socklen, void *user_data)
-{
-    printf("******************** begin call-------%s\n",__FUNCTION__);
-    struct event_base *base = static_cast<event_base *>(user_data);
-    struct bufferevent *bev;
-    printf("fd is %d\n",fd);
-    bev = bufferevent_socket_new(base, fd, BEV_OPT_CLOSE_ON_FREE);
-    if (!bev)
-    {
-        fprintf(stderr, "Error constructing bufferevent!");
-        event_base_loopbreak(base);
-        return;
-    }
-    bufferevent_flush(bev, EV_READ | EV_WRITE, BEV_NORMAL);
-    bufferevent_setcb(bev, conn_readcb, nullptr, conn_eventcb, nullptr);
-    bufferevent_enable(bev, EV_READ | EV_WRITE);
-
-    printf("******************** end call-------%s\n",__FUNCTION__);
-}
 
