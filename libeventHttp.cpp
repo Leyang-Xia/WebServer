@@ -38,10 +38,10 @@ void run_http_server(int port, int num_bases) {
         return;
     }
 
-    init_event_bases(num_bases);
+    init_event_bases(4);
 
     // 创建线程池
-    ThreadPool threadPool(4, 16); // 最小4个线程，最大16个线程
+    ThreadPool threadPool(4, 8); // 最小4个线程，最大8个线程
 
     memset(&sin, 0, sizeof(sin));
     sin.sin_family = AF_INET;
