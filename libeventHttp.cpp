@@ -40,12 +40,15 @@ void run_http_server(int port, int num_bases) {
 
     init_event_bases(num_bases);
 
+    // 创建线程池
+    ThreadPool threadPool(4, 16); // 最小4个线程，最大16个线程
+
     memset(&sin, 0, sizeof(sin));
     sin.sin_family = AF_INET;
     sin.sin_port = htons(port);
     sin.sin_addr.s_addr = htonl(INADDR_ANY);
 
-    listener = evconnlistener_new_bind(main_base, listener_cb, nullptr,
+    listener = evconnlistener_new_bind(main_base, listener_cb, &threadPool,
                                        LEV_OPT_REUSEABLE | LEV_OPT_CLOSE_ON_FREE | LEV_OPT_DEFERRED_ACCEPT, -1,
                                        (struct sockaddr*)&sin, sizeof(sin));
     if (!listener) {
@@ -65,8 +68,10 @@ void run_http_server(int port, int num_bases) {
     for (auto& base : bases) {
         event_base_free(base);
     }
-}
 
+    // 关闭线程池
+    threadPool.shutdown();
+}
 // void process_in_new_thread(int fd) {
 //     if (fd < 0) {
 //         std::cout << "process_in_new_thread_when_accepted() quit!" << std::endl;
@@ -104,11 +109,11 @@ void run_http_server(int port, int num_bases) {
 void listener_cb(struct evconnlistener *listener, evutil_socket_t fd, struct sockaddr *sa, int socklen, void *user_data) {
     struct event_base* base;
     {
-        std::lock_guard<std::mutex> lock(base_mutex);
+        std::unique_lock<std::mutex> lock(base_mutex);
         base = bases[next_base];
         next_base = (next_base + 1) % bases.size();
+        lock.unlock();  // 手动释放锁
     }
-
 
     struct bufferevent* bev = bufferevent_socket_new(base, fd, BEV_OPT_CLOSE_ON_FREE);
     if (!bev) {
@@ -117,30 +122,27 @@ void listener_cb(struct evconnlistener *listener, evutil_socket_t fd, struct soc
         return;
     }
 
-    bufferevent_setcb(bev, conn_readcb, nullptr, conn_eventcb, nullptr);
+    // 将 ThreadPool 实例传递给 conn_readcb
+    bufferevent_setcb(bev, conn_readcb, nullptr, conn_eventcb, user_data);
     bufferevent_enable(bev, EV_READ | EV_WRITE);
 }
-
-void conn_readcb(struct bufferevent *bev, void *user_data)
-{
+void conn_readcb(struct bufferevent *bev, void *user_data) {
     printf("******************** begin call %s.........\n",__FUNCTION__);
 
-//    char method[50], path[4096], protocol[32];
     struct evbuffer *input = bufferevent_get_input(bev);
     size_t len = evbuffer_get_length(input);
     char buf[len];
     bufferevent_read(bev, buf, sizeof(buf));
-    std::unique_ptr<Http> http(new Http(buf));
 
-//    printf("buf[%s]\n", buf);
-//    sscanf(buf, "%[^ ] %[^ ] %[^ \r\n]", method, path, protocol);
-//    printf("method[%s], path[%s], protocol[%s]\n", method, path, protocol);
-
-    if( "GET" == http->method)
-    {
-        http->response_http(bev);
-    }
-    printf("******************** end call %s.........\n", __FUNCTION__);
+    // 将任务提交到线程池
+    ThreadPool* threadPool = static_cast<ThreadPool*>(user_data);
+    threadPool->addTask([buf, bev]() {
+        std::unique_ptr<Http> http(new Http(buf));
+        if ("GET" == http->method) {
+            http->response_http(bev);
+        }
+        printf("******************** end call %s.........\n", __FUNCTION__);
+    });
 }
 
 void conn_eventcb(struct bufferevent *bev, short events, void *user_data)
@@ -170,8 +172,6 @@ void signal_cb(evutil_socket_t sig, short events, void *user_data)
     printf("Caught an interrupt signal; exiting cleanly in one seconds.\n");
     event_base_loopexit(base, &delay);
 }
-
-
 
 
 
