@@ -2,7 +2,7 @@
 #define _LIBEVENT_HTTP_H
 #include "headfile.h"
 
-void run_http_server(int port);
+void run_http_server(int port, int num_bases);
 
 void conn_eventcb(struct bufferevent *bev, short events, void *user_data);
 
