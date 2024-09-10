@@ -1,26 +1,51 @@
+#include <winsock.h>
 #include "libeventHttp.h"
 #include "http.h"
 #include "ThreadPool.h"
-std::mutex mutex;
-void run_http_server(int port) {
-    struct event_base *base;
-    struct evconnlistener *listener;
-    struct event *signal_event;
+#include <vector>
+#include <thread>
+#include <mutex>
+#include <event2/event.h>
+#include <event2/listener.h>
 
+std::mutex mutex;
+std::vector<struct event_base*> bases;
+std::vector<std::thread> threads;
+std::mutex base_mutex;
+int next_base = 0;
+
+void event_base_loop(struct event_base* base) {
+    event_base_dispatch(base);
+}
+
+void init_event_bases(int num_bases) {
+    for (int i = 0; i < num_bases; ++i) {
+        struct event_base* base = event_base_new();
+        bases.push_back(base);
+        threads.emplace_back(event_base_loop, base);
+    }
+}
+
+
+void run_http_server(int port, int num_bases) {
+    struct event_base *main_base;
+    struct evconnlistener *listener;
     struct sockaddr_in sin;
-    base = event_base_new();
-    if (!base) {
+
+    main_base = event_base_new();
+    if (!main_base) {
         fprintf(stderr, "Could not initialize libevent!\n");
         return;
     }
+
+    init_event_bases(num_bases);
 
     memset(&sin, 0, sizeof(sin));
     sin.sin_family = AF_INET;
     sin.sin_port = htons(port);
     sin.sin_addr.s_addr = htonl(INADDR_ANY);
 
-    // 创建监听的套接字，绑定，监听，接受连接请求
-    listener = evconnlistener_new_bind(base, listener_cb, nullptr,
+    listener = evconnlistener_new_bind(main_base, listener_cb, nullptr,
                                        LEV_OPT_REUSEABLE | LEV_OPT_CLOSE_ON_FREE | LEV_OPT_DEFERRED_ACCEPT, -1,
                                        (struct sockaddr*)&sin, sizeof(sin));
     if (!listener) {
@@ -28,62 +53,69 @@ void run_http_server(int port) {
         return;
     }
 
-//    // 创建信号事件, 捕捉并处理
-//    signal_event = evsignal_new(base, SIGINT, signal_cb, (void *)base);
-//    if (!signal_event || event_add(signal_event, nullptr)<0) {
-//        fprintf(stderr, "Could not create/add a signal event!\n");
-//        return;
-//    }
-
-    // 事件循环
-    event_base_dispatch(base);
+    event_base_dispatch(main_base);
 
     evconnlistener_free(listener);
-    event_free(signal_event);
-    event_base_free(base);
-}
+    event_base_free(main_base);
 
-void process_in_new_thread(int fd) {
-    if (fd < 0) {
-        std::cout << "process_in_new_thread_when_accepted() quit!" << std::endl;
-        return;
+    for (auto& thread : threads) {
+        thread.join();
     }
 
-    // 初始化base,写事件和读事件
-    struct event_base* base = event_base_new();
-    struct bufferevent *bev;
-    printf("fd is %d\n", fd);
-
-    bev = bufferevent_socket_new(base, fd, BEV_OPT_CLOSE_ON_FREE);
-
-    if (!bev) {
-        fprintf(stderr, "Error constructing bufferevent!");
-        event_base_loopbreak(base);
-        return;
+    for (auto& base : bases) {
+        event_base_free(base);
     }
-
-    struct timeval timeout = {1800, 0};
-    bufferevent_set_timeouts(bev, &timeout, nullptr);
-
-    bufferevent_flush(bev, EV_READ | EV_WRITE, BEV_NORMAL);
-    bufferevent_setcb(bev, conn_readcb, nullptr, conn_eventcb, nullptr);
-    bufferevent_enable(bev, EV_READ | EV_WRITE);
-
-    printf("******************** end call-------%s\n", __FUNCTION__);
-
-    // 开始libevent的loop循环
-    event_base_dispatch(base);
-    return;
 }
+
+// void process_in_new_thread(int fd) {
+//     if (fd < 0) {
+//         std::cout << "process_in_new_thread_when_accepted() quit!" << std::endl;
+//         return;
+//     }
+
+//     // 初始化base,写事件和读事件
+//     struct event_base* base = event_base_new();
+//     struct bufferevent *bev;
+//     printf("fd is %d\n", fd);
+
+//     bev = bufferevent_socket_new(base, fd, BEV_OPT_CLOSE_ON_FREE);
+
+//     if (!bev) {
+//         fprintf(stderr, "Error constructing bufferevent!");
+//         event_base_loopbreak(base);
+//         return;
+//     }
+
+//     struct timeval timeout = {1800, 0};
+//     bufferevent_set_timeouts(bev, &timeout, nullptr);
+
+//     bufferevent_flush(bev, EV_READ | EV_WRITE, BEV_NORMAL);
+//     bufferevent_setcb(bev, conn_readcb, nullptr, conn_eventcb, nullptr);
+//     bufferevent_enable(bev, EV_READ | EV_WRITE);
+
+//     printf("******************** end call-------%s\n", __FUNCTION__);
+
+//     // 开始libevent的loop循环
+//     event_base_dispatch(base);
+//     return;
+// }
 
 
 void listener_cb(struct evconnlistener *listener, evutil_socket_t fd, struct sockaddr *sa, int socklen, void *user_data) {
-    printf("******************** begin call-------%s\n", __FUNCTION__);
-    std::thread thread(process_in_new_thread, fd);
-    thread.detach();
+    std::lock_guard<std::mutex> lock(base_mutex);
+    struct event_base* base = bases[next_base];
+    next_base = (next_base + 1) % bases.size();
+
+    struct bufferevent* bev = bufferevent_socket_new(base, fd, BEV_OPT_CLOSE_ON_FREE);
+    if (!bev) {
+        fprintf(stderr, "Error constructing bufferevent!");
+        close(fd);
+        return;
+    }
+
+    bufferevent_setcb(bev, conn_readcb, nullptr, conn_eventcb, nullptr);
+    bufferevent_enable(bev, EV_READ | EV_WRITE);
 }
-
-
 
 void conn_readcb(struct bufferevent *bev, void *user_data)
 {
@@ -134,5 +166,8 @@ void signal_cb(evutil_socket_t sig, short events, void *user_data)
     printf("Caught an interrupt signal; exiting cleanly in one seconds.\n");
     event_base_loopexit(base, &delay);
 }
+
+
+
 
 
