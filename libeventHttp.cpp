@@ -38,10 +38,16 @@ void run_http_server(int port, int num_bases) {
         return;
     }
 
-    init_event_bases(4);
+    // 获取系统的 CPU 核心数
+    unsigned int numCores = std::thread::hardware_concurrency();
+    if (numCores == 0) {
+        numCores = 4; // 如果无法获取核心数，默认使用 4 个
+    }
 
-    // 创建线程池
-    ThreadPool threadPool(4, 8); // 最小4个线程，最大8个线程
+    init_event_bases(numCores); // 初始化 numCores 个 event_base
+
+    // 创建线程池，最小 numCores 个线程，最大 2 * numCores 个线程
+    ThreadPool threadPool(numCores, 2 * numCores);
 
     memset(&sin, 0, sizeof(sin));
     sin.sin_family = AF_INET;
