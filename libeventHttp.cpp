@@ -102,9 +102,13 @@ void run_http_server(int port, int num_bases) {
 
 
 void listener_cb(struct evconnlistener *listener, evutil_socket_t fd, struct sockaddr *sa, int socklen, void *user_data) {
-    std::lock_guard<std::mutex> lock(base_mutex);
-    struct event_base* base = bases[next_base];
-    next_base = (next_base + 1) % bases.size();
+    struct event_base* base;
+    {
+        std::lock_guard<std::mutex> lock(base_mutex);
+        base = bases[next_base];
+        next_base = (next_base + 1) % bases.size();
+    }
+
 
     struct bufferevent* bev = bufferevent_socket_new(base, fd, BEV_OPT_CLOSE_ON_FREE);
     if (!bev) {
