@@ -127,6 +127,12 @@ void listener_cb(struct evconnlistener *listener, evutil_socket_t fd, struct soc
         close(fd);
         return;
     }
+    
+    // 设置读写超时
+    struct timeval read_timeout = {60, 0};  // 60秒读超时
+    struct timeval write_timeout = {60, 0}; // 60秒写超时
+    bufferevent_set_timeouts(bev, &read_timeout, &write_timeout);
+    
 
     // 将 ThreadPool 实例传递给 conn_readcb
     bufferevent_setcb(bev, conn_readcb, nullptr, conn_eventcb, user_data);
@@ -164,8 +170,8 @@ void conn_eventcb(struct bufferevent *bev, short events, void *user_data)
                strerror(errno));
     } else if (events & BEV_EVENT_TIMEOUT) {
         printf("Connection timeout.\n");
-        bufferevent_free(bev);
     }
+    bufferevent_free(bev);
 
     printf("******************** end call %s.........\n", __FUNCTION__);
 }
