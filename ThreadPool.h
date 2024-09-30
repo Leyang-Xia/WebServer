@@ -35,7 +35,8 @@ private:
 private:
     std::vector<std::thread>* m_threadIDs; // 线程ID列表
     TaskQueue* m_taskQ; // 任务队列
-    std::mutex m_lock; // 互斥锁
+    std::shared_mutex m_taskLock; // 任务队列的读写锁
+    std::mutex m_countLock; // 线程计数的互斥锁
     std::condition_variable m_notEmpty; // 条件变量，用于线程等待任务
     int m_minNum; // 最小线程数
     int m_maxNum; // 最大线程数
