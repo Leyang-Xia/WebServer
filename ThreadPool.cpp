@@ -61,6 +61,13 @@ void ThreadPool::worker() {
         {
             std::lock_guard<std::mutex> lock(m_lock);
             --m_busyNum; // 忙线程数减1
+
+            // 如果线程池正在减少线程数量且当前线程是多余的，则退出
+            if (m_exitNum > 0) {
+                --m_aliveNum;
+                --m_exitNum;
+                return; // 多余的线程退出
+            }
         }
     }
 }
