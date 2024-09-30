@@ -8,14 +8,16 @@ ThreadPool::ThreadPool(int minNum, int maxNum) : m_minNum(minNum), m_maxNum(maxN
         addThread(); // 添加线程
     }
 
-    std::thread([this] { manager(); }).detach(); // 启动管理者线程
+    std::thread([&] { manager(); }).detach(); // 启动管理者线程
 }
 
-ThreadPool::~ThreadPool() = default;
+ThreadPool::~ThreadPool() {
+    shutdown(); // 确保在析构时关闭线程池
+}
 
 void ThreadPool::addTask(std::function<void()> task) {
     {
-        std::lock_guard<std::mutex> lock(m_lock);
+        std::unique_lock<std::shared_mutex> lock(m_taskLock);
         if (m_shutdown) {
             std::cerr << "ThreadPool is shutdown. Cannot add new tasks." << std::endl;
             return;
@@ -27,18 +29,21 @@ void ThreadPool::addTask(std::function<void()> task) {
 }
 
 int ThreadPool::getBusyNumber() {
-    std::lock_guard<std::mutex> lock(m_lock);
+    std::lock_guard<std::mutex> lock(m_countLock);
     return m_busyNum;
 }
 
 int ThreadPool::getAliveNumber() {
-    std::lock_guard<std::mutex> lock(m_lock);
+    std::lock_guard<std::mutex> lock(m_countLock);
     return m_aliveNum;
 }
 
 void ThreadPool::addThread() {
-    m_threadIDs->emplace_back([this] { worker(); });
-    ++m_aliveNum;
+    m_threadIDs->emplace_back([&] { worker(); });
+    {
+        std::lock_guard<std::mutex> lock(m_countLock);
+        ++m_aliveNum;
+    }
 }
 
 void ThreadPool::worker() {
@@ -46,20 +51,23 @@ void ThreadPool::worker() {
         Task task;
 
         {
-            std::unique_lock<std::mutex> lock(m_lock);
-            m_notEmpty.wait(lock, [this] { return !m_taskQ->empty() || m_shutdown; }); // 等待任务队列不为空或线程池关闭
+            std::unique_lock<std::shared_mutex> lock(m_taskLock);
+            m_notEmpty.wait(lock, [&] { return !m_taskQ->empty() || m_shutdown; }); // 等待任务队列不为空或线程池关闭
 
             if (m_shutdown) return;
 
             task = m_taskQ->front();
             m_taskQ->pop(); // 从队列中移除任务
-            ++m_busyNum; // 忙线程数加1
+            {
+                std::lock_guard<std::mutex> lock(m_countLock);
+                ++m_busyNum; // 忙线程数加1
+            }
         }
 
         task.function(); // 执行任务
 
         {
-            std::lock_guard<std::mutex> lock(m_lock);
+            std::lock_guard<std::mutex> lock(m_countLock);
             --m_busyNum; // 忙线程数减1
 
             // 如果线程池正在减少线程数量且当前线程是多余的，则退出
@@ -84,10 +92,14 @@ void ThreadPool::manager() {
         }
 
         {
-            std::lock_guard<std::mutex> lock(m_lock);
-            int queueSize = m_taskQ->size(); // 获取任务队列大小
-            int busyNum = m_busyNum; // 获取忙线程数
-            int aliveNum = m_aliveNum; // 获取活跃线程数
+            std::lock_guard<std::mutex> lock(m_countLock);
+            int queueSize;
+            {
+                std::shared_lock<std::shared_mutex> taskLock(m_taskLock); // 读锁
+                queueSize = m_taskQ->size();  // 读取任务队列大小
+            }
+            int busyNum = m_busyNum;
+            int aliveNum = m_aliveNum;
 
             // 如果任务队列长度大于忙线程数且活跃线程数小于最大线程数，增加线程. 如果忙线程数小于活跃线程数的一半且活跃线程数大于最小线程数，减少线程
             if (queueSize > busyNum && aliveNum < m_maxNum) {
@@ -97,7 +109,10 @@ void ThreadPool::manager() {
             } else if (busyNum * 2 < aliveNum && aliveNum > m_minNum) {
                 m_exitNum = scale;
                 for(int i = 0; i < scale && m_aliveNum > m_minNum; ++i) {
-                    m_taskQ->push(Task()); // 为了维持线程数最少为 m_minNum，添加空任务
+                    {
+                        std::unique_lock<std::shared_mutex> taskLock(m_taskLock);
+                        m_taskQ->push(Task());
+                    }
                 }
                 m_notEmpty.notify_all();
             }
